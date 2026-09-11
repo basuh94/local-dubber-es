@@ -1,0 +1,2 @@
+qwen-tts==0.1.1
+# Install a matching CUDA PyTorch wheel for your driver if pip does not select one automatically.

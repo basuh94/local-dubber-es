@@ -1,0 +1,7 @@
+# Main environment (Python 3.11)
+# IMPORTANT: run scripts/setup_windows.ps1 instead of pip install -r directly.
+# Chatterbox pins torch 2.6.0; setup_windows.ps1 replaces it with the matching CUDA 12.6 wheels.
+yt-dlp==2026.8.19
+faster-whisper==1.2.1
+chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@65b1843
+pytest==9.1.1

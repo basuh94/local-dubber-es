@@ -1,0 +1,158 @@
+from __future__ import annotations
+from pathlib import Path
+import re
+import subprocess
+from .utils import OUTPUT, WORK, block_window, ffprobe_duration
+
+
+def extract_reference(video_path: Path, start: float, end: float, out: Path) -> Path:
+    duration = max(1.0, end - start)
+    subprocess.run([
+        "ffmpeg", "-y", "-ss", f"{start:.3f}", "-i", str(video_path), "-t", f"{duration:.3f}",
+        "-vn", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(out)
+    ], check=True)
+    return out
+
+
+# Chatterbox T3 sizes its text position embedding at max_text_tokens (2048) + 2. Feeding
+# it more indexes past the end of that table, which fails as an unrecoverable CUDA
+# device-side assert that kills the whole run, so stay well inside the limit.
+TTS_MAX_TEXT_TOKENS = 1000
+_CHARS_PER_TOKEN = 1.35  # measured on Spanish output, used only if tokenizing fails
+
+
+def _fits(text: str, model=None, language_id: str = "es",
+          max_tokens: int = TTS_MAX_TEXT_TOKENS) -> bool:
+    if model is not None:
+        try:
+            from chatterbox.mtl_tts import punc_norm
+
+            tokens = model.tokenizer.text_to_tokens(punc_norm(text), language_id=language_id)
+            return int(tokens.shape[-1]) <= max_tokens
+        except Exception:
+            pass
+    return len(text) <= max_tokens * _CHARS_PER_TOKEN
+
+
+def _pack(pieces: list[str], joiner: str, model, language_id: str, max_tokens: int) -> list[str]:
+    """Greedily group pieces into the fewest chunks that each still fit."""
+    chunks: list[str] = []
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece:
+            continue
+        if chunks and _fits(chunks[-1] + joiner + piece, model, language_id, max_tokens):
+            chunks[-1] = chunks[-1] + joiner + piece
+        else:
+            chunks.append(piece)
+    return chunks
+
+
+def split_for_tts(text: str, model=None, language_id: str = "es",
+                  max_tokens: int = TTS_MAX_TEXT_TOKENS) -> list[str]:
+    """Break text into pieces the TTS can hold, preferring sentence then clause breaks."""
+    text = text.strip()
+    if not text or _fits(text, model, language_id, max_tokens):
+        return [text] if text else []
+
+    for pattern, joiner in ((r"(?<=[.!?])\s+", " "), (r"(?<=[,;:])\s+", " ")):
+        chunks = _pack(re.split(pattern, text), joiner, model, language_id, max_tokens)
+        if chunks and all(_fits(c, model, language_id, max_tokens) for c in chunks):
+            return chunks
+
+    # No punctuation to lean on: fall back to word boundaries.
+    return _pack(text.split(), " ", model, language_id, max_tokens) or [text]
+
+
+def fit_audio(source: Path, destination: Path, target_duration: float, max_speedup: float,
+              window_duration: float | None = None) -> dict:
+    """Never slow TTS down. Pad if shorter; mildly speed up if longer; trim only as last resort.
+
+    ``window_duration`` may extend past ``target_duration`` into the pause before the next
+    block. Spanish is typically longer than English, so spending that silence at natural
+    speed is preferable to compressing the sentence.
+    """
+    actual = ffprobe_duration(source)
+    window = max(float(target_duration), float(window_duration or target_duration))
+    if actual <= target_duration:
+        af = f"apad=whole_dur={target_duration:.6f},atrim=duration={target_duration:.6f}"
+        applied, trimmed, fitted = 1.0, False, target_duration
+    elif actual <= window:
+        # Fits in the source window plus the following pause: keep natural speed.
+        af = "anull"
+        applied, trimmed, fitted = 1.0, False, actual
+    else:
+        required = actual / max(window, 0.01)
+        applied = min(required, max_speedup)
+        af = f"atempo={applied:.6f},atrim=duration={window:.6f},apad=whole_dur={window:.6f}"
+        trimmed = required > max_speedup
+        fitted = window
+    subprocess.run([
+        "ffmpeg", "-y", "-i", str(source), "-af", af, "-ar", "24000", "-ac", "1", str(destination)
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"actual": actual, "target": target_duration, "window": window,
+            "speed": applied, "trimmed": trimmed, "duration": fitted}
+
+
+def synthesize_chatterbox(blocks: list[dict], voice_ref: Path, cfg_weight: float,
+                           exaggeration: float, max_speedup: float) -> list[dict]:
+    import torch
+    import torchaudio as ta
+    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = ChatterboxMultilingualTTS.from_pretrained(device=device, t3_model="v3")
+    blocks_dir = OUTPUT / "dub_blocks"
+    blocks_dir.mkdir(parents=True, exist_ok=True)
+    result = []
+    total = len(blocks)
+    over_budget = 0
+    for i, b in enumerate(blocks):
+        idx = int(b["id"])
+        raw = blocks_dir / f"block_{idx:03d}_raw.wav"
+        fitted = blocks_dir / f"block_{idx:03d}.wav"
+        pieces = split_for_tts(b["translated_text"], model)
+        if len(pieces) > 1:
+            print(f"      [warn] block {idx}: el texto excede el contexto del TTS; "
+                  f"sintetizado en {len(pieces)} partes")
+        parts = [
+            model.generate(
+                piece, language_id="es", audio_prompt_path=str(voice_ref),
+                exaggeration=exaggeration, cfg_weight=cfg_weight,
+            )
+            for piece in pieces
+        ]
+        wav = parts[0] if len(parts) == 1 else torch.cat(parts, dim=-1)
+        ta.save(str(raw), wav, model.sr)
+        # Speech may run into the pause before the next block, but never over it.
+        window = block_window(blocks, i)
+        stats = fit_audio(raw, fitted, b["duration"], max_speedup, window_duration=window)
+        if stats["trimmed"]:
+            over_budget += 1
+            print(f"      [warn] block {idx}: Spanish runs {stats['actual']:.2f}s but only "
+                  f"{stats['window']:.2f}s available even at {stats['speed']:.2f}x; tail trimmed. "
+                  f"Shorten this line in output/blocks_es.json to fix.")
+        item = dict(b); item.update({"audio": str(fitted), "timing": stats})
+        result.append(item)
+    del model
+    torch.cuda.empty_cache()
+    if over_budget:
+        print(f"      [warn] {over_budget}/{total} blocks were trimmed; see warnings above.")
+    return result
+
+
+def assemble_dub(blocks: list[dict], final_path: Path) -> Path:
+    inputs, filters, labels = [], [], []
+    for i, b in enumerate(blocks):
+        inputs += ["-i", b["audio"]]
+        delay = round(float(b["start"]) * 1000)
+        filters.append(f"[{i}:a]adelay={delay}:all=1[a{i}]")
+        labels.append(f"[a{i}]")
+    if not blocks:
+        raise ValueError("No blocks to assemble")
+    filter_complex = ";".join(filters) + ";" + "".join(labels) + f"amix=inputs={len(blocks)}:duration=longest:normalize=0[out]"
+    subprocess.run([
+        "ffmpeg", "-y", *inputs, "-filter_complex", filter_complex, "-map", "[out]",
+        "-ar", "24000", "-ac", "1", str(final_path)
+    ], check=True)
+    return final_path

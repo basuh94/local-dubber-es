@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-dubber-win"
+# Single source of truth: src/ytdubber/__init__.py. Keeping the literal here too let the
+# two drift apart silently.
+dynamic = ["version"]
+description = "Local YouTube -> Spanish dubbing pipeline optimized for Windows + NVIDIA 8GB GPUs"
+requires-python = ">=3.11,<3.12"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Local project scaffold"}]
+dependencies = [
+  "yt-dlp==2026.8.19",
+  "faster-whisper==1.2.1",
+  "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@65b1843",
+]
+
+[project.scripts]
+ytdubber = "ytdubber.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "ytdubber.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ytdubber = ["web/*.html"]
+
+[tool.pytest.ini_options]
+# Keep `pytest` (as invoked by scripts/run_tests.ps1 and setup_windows.ps1) on the
+# model-independent suite. scripts/model_smoke_test.py matches pytest's default
+# `test*.py` discovery pattern and would otherwise download/run the GPU models.
+testpaths = ["tests"]

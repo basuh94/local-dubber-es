@@ -1,0 +1,31 @@
+# Entornos virtuales
+.venv/
+.venv-build/
+.venv-qwen/
+
+# Artefactos de Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Directorios de trabajo del pipeline
+work/*
+!work/.gitkeep
+output/*
+!output/.gitkeep
+library/
+
+# Material de entrada del usuario
+input/*.wav
+input/*.mp3
+
+# Descargas grandes: las restaura scripts/setup_windows.ps1
+vendor/cuda12/*.dll
+vendor/*.7z
+
+# Compilado por scripts/build_launcher.ps1
+YouTube Dubber.exe
+
+# Ajustes locales de la maquina (rutas absolutas, permisos personales)
+.claude/settings.local.json

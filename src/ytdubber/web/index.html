@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Dubber</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f4; --panel: #fff; --ink: #16150f; --muted: #6b6a62;
+    --line: #e2e1db; --accent: #b34a1a; --accent-ink: #fff;
+    --ok: #2f7d4f; --warn: #9a6a12; --err: #a8321f;
+    --code-bg: #f0efe9;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16150f; --panel: #201f18; --ink: #f0efe6; --muted: #a3a196;
+      --line: #35342a; --accent: #e2703a; --accent-ink: #16150f;
+      --ok: #6fbf8b; --warn: #d8a93f; --err: #e57b63;
+      --code-bg: #14130e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  h1 { font-size: 21px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 28px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 20px; margin-bottom: 24px;
+  }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .07em;
+       color: var(--muted); margin: 0 0 14px; font-weight: 600; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  input[type=text], select {
+    width: 100%; padding: 9px 11px; font: inherit; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+  }
+  input[type=text]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  .row > div { flex: 1 1 150px; }
+  button {
+    font: inherit; font-weight: 500; padding: 9px 16px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.danger { color: var(--err); }
+  .actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
+  /* progress */
+  .stages { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 14px; }
+  .stage { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 14px; }
+  .dot { width: 18px; height: 18px; border-radius: 50%; flex: none; border: 2px solid var(--line);
+         display: grid; place-items: center; font-size: 10px; color: var(--accent-ink); }
+  .stage.done .dot { background: var(--ok); border-color: var(--ok); }
+  .stage.active .dot { border-color: var(--accent); border-style: dashed; animation: spin 2s linear infinite; }
+  .stage.pending { color: var(--muted); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+  .meta { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 13px; margin-top: 10px; }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 7px;
+    padding: 11px; font: 12px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+    max-height: 220px; overflow: auto; margin: 12px 0 0; white-space: pre-wrap; word-break: break-word;
+  }
+  .note { border-left: 3px solid var(--warn); padding: 8px 12px; background: var(--code-bg);
+          border-radius: 0 7px 7px 0; font-size: 13px; margin-top: 12px; }
+  .note.err { border-color: var(--err); }
+  .note b { display: block; margin-bottom: 4px; }
+  .note ul { margin: 6px 0 0; padding-left: 18px; }
+  /* library */
+  .item { display: flex; gap: 14px; padding: 14px 0; border-top: 1px solid var(--line); align-items: flex-start; }
+  .item:first-of-type { border-top: 0; }
+  .thumb { width: 128px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px;
+           background: var(--code-bg); flex: none; border: 1px solid var(--line); }
+  .item h3 { margin: 0 0 3px; font-size: 15px; font-weight: 600; }
+  .item .facts { color: var(--muted); font-size: 12.5px; }
+  .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+  .tag { font-size: 11.5px; padding: 2px 7px; border-radius: 20px;
+         border: 1px solid var(--line); color: var(--muted); }
+  .tag.warn { color: var(--warn); border-color: var(--warn); }
+  .item .btns { margin-top: 9px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .item .btns button, .item .btns a {
+    font-size: 13px; padding: 5px 11px; text-decoration: none;
+    border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--panel);
+    cursor: pointer; display: inline-block;
+  }
+  .empty { color: var(--muted); font-size: 14px; padding: 6px 0; }
+  video { width: 100%; border-radius: 7px; margin-top: 12px; background: #000; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>YouTube Dubber</h1><span class="sub" id="gpu"></span></header>
+  <p class="sub">Doblaje local al espanol de Espana. RTX 3070 · faster-whisper → Qwen3 → Chatterbox V3.</p>
+
+  <section class="panel">
+    <h2>Nuevo doblaje</h2>
+    <label for="src">URL de YouTube o ruta de un video local</label>
+    <input type="text" id="src" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+    <div class="row">
+      <div>
+        <label for="profile">Perfil</label>
+        <select id="profile"></select>
+      </div>
+      <div>
+        <label for="lang">Idioma de origen</label>
+        <select id="lang">
+          <option value="en" selected>Ingles (en)</option>
+          <option value="">Detectar automaticamente</option>
+          <option value="fr">Frances (fr)</option>
+          <option value="de">Aleman (de)</option>
+          <option value="it">Italiano (it)</option>
+          <option value="pt">Portugues (pt)</option>
+        </select>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="start">Doblar</button>
+      <button id="cancel" class="danger hide">Cancelar</button>
+      <span class="sub" id="hint" style="margin:0"></span>
+    </div>
+  </section>
+
+  <section class="panel hide" id="jobPanel">
+    <h2>En proceso</h2>
+    <div id="jobTitle" style="font-weight:600;margin-bottom:12px"></div>
+    <div class="stages" id="stages"></div>
+    <div class="bar"><i id="bar" style="width:0%"></i></div>
+    <div class="meta">
+      <span id="elapsed"></span><span id="ttsInfo"></span><span id="statusTxt"></span>
+    </div>
+    <div class="note err hide" id="errBox"></div>
+    <div class="note hide" id="warnBox"></div>
+    <pre id="log"></pre>
+  </section>
+
+  <section class="panel">
+    <h2>Videos doblados <span id="count" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div id="lib"><p class="empty">Cargando…</p></div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const STAGE_NAMES = [
+  "Descarga y extraccion de audio",
+  "Transcripcion (faster-whisper)",
+  "Segmentacion en bloques",
+  "Traduccion al espanol (Ollama)",
+  "Referencia de voz",
+  "Sintesis de voz (Chatterbox) y tiempos",
+  "Mezcla del video final",
+];
+const BUSY = ["preparing", "running", "archiving", "cancelling"];
+let libCache = [];
+
+const fmtTime = s => {
+  s = Math.round(s || 0);
+  return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+};
+const fmtSize = b => b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.round(b / 1e6) + " MB";
+const esc = t => { const d = document.createElement("div"); d.textContent = t ?? ""; return d.innerHTML; };
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+// ---- stages ----------------------------------------------------------------
+$("stages").innerHTML = STAGE_NAMES.map((n, i) =>
+  `<div class="stage pending" data-s="${i + 1}"><span class="dot">✓</span><span>${n}</span></div>`
+).join("");
+
+function renderJob(j) {
+  const busy = BUSY.includes(j.status);
+  const show = j.status && j.status !== "idle";
+  $("jobPanel").classList.toggle("hide", !show);
+  $("start").disabled = busy;
+  $("cancel").classList.toggle("hide", !(j.status === "preparing" || j.status === "running"));
+  $("src").disabled = busy;
+  if (!show) return;
+
+  $("jobTitle").textContent = j.title || j.source || "";
+  const cur = j.stage || 0;
+  const finished = j.status === "done";
+  document.querySelectorAll(".stage").forEach(el => {
+    const n = +el.dataset.s;
+    el.className = "stage " + (finished || n < cur ? "done" : n === cur && busy ? "active" : n <= cur ? "done" : "pending");
+  });
+
+  let pct = finished ? 100 : ((cur - 1) / STAGE_NAMES.length) * 100;
+  if (cur === 6 && j.tts_total) pct += (j.tts_done / j.tts_total) * (100 / STAGE_NAMES.length);
+  else if (busy && cur > 0) pct += 100 / STAGE_NAMES.length / 2;
+  $("bar").style.width = Math.min(100, Math.max(0, pct)).toFixed(1) + "%";
+
+  $("elapsed").textContent = "⏱ " + fmtTime(j.elapsed);
+  $("ttsInfo").textContent = (cur === 6 && j.tts_total) ? `🔊 bloque ${j.tts_done}/${j.tts_total}` : "";
+  const label = { done: "✅ Terminado", error: "❌ Error", cancelled: "⏹ Cancelado" }[j.status] || ("▶ " + (j.stage_label || ""));
+  $("statusTxt").textContent = label;
+
+  $("errBox").classList.toggle("hide", !j.error);
+  if (j.error) $("errBox").innerHTML = "<b>Error</b>" + esc(j.error);
+
+  const w = j.warnings || [];
+  $("warnBox").classList.toggle("hide", !w.length);
+  if (w.length) {
+    $("warnBox").innerHTML = `<b>${w.length} aviso(s) de ajuste temporal</b><ul>` +
+      w.slice(0, 12).map(x => "<li>" + esc(x) + "</li>").join("") + "</ul>";
+  }
+
+  const pre = $("log"), atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+  pre.textContent = (j.log || []).join("\n");
+  if (atBottom) pre.scrollTop = pre.scrollHeight;
+}
+
+// ---- library ---------------------------------------------------------------
+function renderLib(items) {
+  libCache = items;
+  $("count").textContent = items.length ? `(${items.length})` : "";
+  if (!items.length) {
+    $("lib").innerHTML = '<p class="empty">Todavia no hay ningun video doblado.</p>';
+    return;
+  }
+  $("lib").innerHTML = items.map(m => {
+    const date = (m.created || "").replace("T", " ").slice(0, 16);
+    const tags = [
+      `<span class="tag">${esc(m.profile)}</span>`,
+      `<span class="tag">${m.blocks} bloques</span>`,
+      m.trimmed_blocks ? `<span class="tag warn">${m.trimmed_blocks} recortados</span>` : "",
+    ].join("");
+    const thumb = m.has_thumb
+      ? `<img class="thumb" src="/media/${encodeURIComponent(m.id)}/thumb" alt="">`
+      : `<div class="thumb"></div>`;
+    return `<div class="item">
+      ${thumb}
+      <div style="flex:1;min-width:0">
+        <h3>${esc(m.title)}</h3>
+        <div class="facts">${date} · ${fmtTime(m.duration)} de video · ${fmtSize(m.size)}${m.elapsed ? " · doblado en " + fmtTime(m.elapsed) : ""}</div>
+        <div class="tags">${tags}</div>
+        <div class="btns">
+          <button data-play="${esc(m.id)}">Ver</button>
+          <a href="/media/${encodeURIComponent(m.id)}/video" download>Descargar MP4</a>
+          <a href="/media/${encodeURIComponent(m.id)}/file/subtitles_es.srt">Subtitulos</a>
+          <button class="danger" data-del="${esc(m.id)}">Eliminar</button>
+        </div>
+        <div data-player="${esc(m.id)}"></div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+$("lib").addEventListener("click", async e => {
+  const play = e.target.closest("[data-play]");
+  if (play) {
+    const id = play.dataset.play, box = document.querySelector(`[data-player="${CSS.escape(id)}"]`);
+    box.innerHTML = box.innerHTML ? "" : `<video controls autoplay src="/media/${encodeURIComponent(id)}/video"></video>`;
+    play.textContent = box.innerHTML ? "Ocultar" : "Ver";
+    return;
+  }
+  const del = e.target.closest("[data-del]");
+  if (del) {
+    const id = del.dataset.del;
+    const item = libCache.find(m => m.id === id);
+    if (!confirm(`Eliminar definitivamente "${item ? item.title : id}"?\n\nSe borrara la carpeta library/${id} con el MP4, los subtitulos y las transcripciones.`)) return;
+    del.disabled = true;
+    try { await api("/api/library/" + encodeURIComponent(id), { method: "DELETE" }); await refreshLib(); }
+    catch (err) { alert("No se pudo eliminar: " + err.message); del.disabled = false; }
+  }
+});
+
+const refreshLib = async () => renderLib(await api("/api/library"));
+
+// ---- controls --------------------------------------------------------------
+$("start").addEventListener("click", async () => {
+  const source = $("src").value.trim();
+  if (!source) { $("src").focus(); return; }
+  $("hint").textContent = "";
+  try {
+    renderJob(await api("/api/job", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source, profile: $("profile").value, source_lang: $("lang").value || null }),
+    }));
+  } catch (e) { $("hint").textContent = e.message; }
+});
+
+$("cancel").addEventListener("click", async () => {
+  try { renderJob(await api("/api/job/cancel", { method: "POST" })); }
+  catch (e) { $("hint").textContent = e.message; }
+});
+
+$("src").addEventListener("keydown", e => { if (e.key === "Enter") $("start").click(); });
+
+// ---- boot + poll -----------------------------------------------------------
+(async () => {
+  const profiles = await api("/api/profiles");
+  $("profile").innerHTML = Object.entries(profiles).map(([n, p]) =>
+    `<option value="${n}"${n === "balanced" ? " selected" : ""}>${n} — ${p.asr} + ${p.llm}</option>`
+  ).join("");
+  await refreshLib();
+
+  const paintGpu = async () => {
+    try {
+      const s = await api("/api/system");
+      const gpu = s.gpu
+        ? `${s.gpu} · ${(s.vram_used / 1024).toFixed(1)}/${(s.vram_total / 1024).toFixed(0)} GB VRAM`
+        : "GPU no detectada";
+      $("gpu").textContent = s.version ? `v${s.version} · ${gpu}` : gpu;
+    } catch (e) { /* leave the last reading in place */ }
+  };
+  paintGpu();
+  setInterval(paintGpu, 4000);
+
+  let lastStatus = null;
+  setInterval(async () => {
+    try {
+      const j = await api("/api/job");
+      renderJob(j);
+      if (j.status !== lastStatus) {
+        if (["done", "error", "cancelled"].includes(j.status)) await refreshLib();
+        lastStatus = j.status;
+      }
+    } catch (e) { /* server restarting; next tick retries */ }
+  }, 1000);
+})();
+</script>
+</body>
+</html>
