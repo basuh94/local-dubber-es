@@ -20,10 +20,15 @@ def _write_target_subtitles(blocks: list[dict]) -> None:
 
 
 def run_pipeline(source: str, profile_name="balanced", source_lang: str | None = None,
-                 voice_ref: str | None = None, original_speech_level: float = 0.12) -> Path:
+                 voice_ref: str | None = None, original_speech_level: float = 0.12,
+                 tts_takes: int | None = None, max_speedup: float | None = None) -> Path:
     ensure_dirs()
     profile = get_profile(profile_name)
+    takes = profile.tts_takes if tts_takes is None else max(1, tts_takes)
+    speed_cap = profile.max_speedup if max_speedup is None else max_speedup
     print(f"[profile] {profile.name}: ASR={profile.asr_model} / LLM={profile.ollama_model} / TTS=Chatterbox V3")
+    if takes != profile.tts_takes or speed_cap != profile.max_speedup:
+        print(f"[override] tomas={takes} max_speedup={speed_cap}")
 
     print("[1/7] Download/extract")
     video, audio16 = download_source(source)
@@ -37,7 +42,7 @@ def run_pipeline(source: str, profile_name="balanced", source_lang: str | None =
 
     print("[4/7] Translate with Ollama")
     translated = translate_blocks(blocks, profile.ollama_model, tr["meta"]["language"], "es",
-                                  max_speedup=profile.max_speedup)
+                                  max_speedup=speed_cap)
     write_json(OUTPUT / "blocks_es.json", translated)
     _write_target_subtitles(translated)
     unload_ollama(profile.ollama_model)  # Free VRAM before TTS.
@@ -56,7 +61,8 @@ def run_pipeline(source: str, profile_name="balanced", source_lang: str | None =
     print("[6/7] Synthesize + timing")
     voiced = synthesize_chatterbox(
         translated, ref, cfg_weight=profile.cfg_weight,
-        exaggeration=profile.exaggeration, max_speedup=profile.max_speedup,
+        exaggeration=profile.exaggeration, max_speedup=speed_cap,
+        takes=takes,
     )
     write_json(OUTPUT / "blocks_voiced.json", voiced)
     dub = assemble_dub(voiced, OUTPUT / "dub_es.wav")

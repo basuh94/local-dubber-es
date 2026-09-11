@@ -20,6 +20,10 @@ def main(argv=None):
     dub.add_argument("--voice-ref", default=None, help="optional clean voice WAV")
     dub.add_argument("--original-speech-level", type=float, default=0.12,
                      help="original soundtrack gain under dubbed speech, 0.0..1.0")
+    dub.add_argument("--tts-takes", type=int, default=None,
+                     help="override the profile's TTS takes per block; 1 disables retakes")
+    dub.add_argument("--max-speedup", type=float, default=None,
+                     help="override the profile's speed-up cap, e.g. 1.30")
     web = sub.add_parser("web", help="local control panel in the browser")
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8765)
@@ -28,7 +32,9 @@ def main(argv=None):
     if args.cmd == "doctor":
         return 0 if run_preflight(args.model) else 1
     if args.cmd == "dub":
-        run_pipeline(args.source, args.profile, args.source_lang, args.voice_ref, args.original_speech_level)
+        run_pipeline(args.source, args.profile, args.source_lang, args.voice_ref,
+                     args.original_speech_level, tts_takes=args.tts_takes,
+                     max_speedup=args.max_speedup)
         return 0
     if args.cmd == "web":
         from .webapp import serve

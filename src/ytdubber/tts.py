@@ -94,8 +94,37 @@ def fit_audio(source: Path, destination: Path, target_duration: float, max_speed
             "speed": applied, "trimmed": trimmed, "duration": fitted}
 
 
+def cfg_ladder(base: float, takes: int) -> list[float]:
+    """cfg_weight to use on each successive take.
+
+    The profile's value (0.0) is what keeps an English reference from dragging its accent
+    into the Spanish, so the first takes keep it. Only once a block is heading for a
+    truncated tail do later takes raise it, because a slightly stronger accent beats
+    losing the end of the sentence outright.
+    """
+    ladder = [base, base, max(base, 0.3), max(base, 0.5)]
+    while len(ladder) < takes:
+        ladder.append(ladder[-1])
+    return ladder[:max(1, takes)]
+
+
+def _synthesize_once(model, pieces: list[str], voice_ref: Path, *, exaggeration: float,
+                     cfg_weight: float):
+    import torch
+
+    parts = [
+        model.generate(
+            piece, language_id="es", audio_prompt_path=str(voice_ref),
+            exaggeration=exaggeration, cfg_weight=cfg_weight,
+        )
+        for piece in pieces
+    ]
+    return parts[0] if len(parts) == 1 else torch.cat(parts, dim=-1)
+
+
 def synthesize_chatterbox(blocks: list[dict], voice_ref: Path, cfg_weight: float,
-                           exaggeration: float, max_speedup: float) -> list[dict]:
+                           exaggeration: float, max_speedup: float,
+                           takes: int = 3) -> list[dict]:
     import torch
     import torchaudio as ta
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
@@ -107,6 +136,7 @@ def synthesize_chatterbox(blocks: list[dict], voice_ref: Path, cfg_weight: float
     result = []
     total = len(blocks)
     over_budget = 0
+    retakes = 0
     for i, b in enumerate(blocks):
         idx = int(b["id"])
         raw = blocks_dir / f"block_{idx:03d}_raw.wav"
@@ -115,29 +145,36 @@ def synthesize_chatterbox(blocks: list[dict], voice_ref: Path, cfg_weight: float
         if len(pieces) > 1:
             print(f"      [warn] block {idx}: el texto excede el contexto del TTS; "
                   f"sintetizado en {len(pieces)} partes")
-        parts = [
-            model.generate(
-                piece, language_id="es", audio_prompt_path=str(voice_ref),
-                exaggeration=exaggeration, cfg_weight=cfg_weight,
-            )
-            for piece in pieces
-        ]
-        wav = parts[0] if len(parts) == 1 else torch.cat(parts, dim=-1)
-        ta.save(str(raw), wav, model.sr)
+
         # Speech may run into the pause before the next block, but never over it.
         window = block_window(blocks, i)
+        budget = window * max_speedup  # what fit_audio can absorb without trimming
+        wav, best_dur, used_cfg = None, None, cfg_weight
+        for take, take_cfg in enumerate(cfg_ladder(cfg_weight, takes)):
+            candidate = _synthesize_once(model, pieces, voice_ref,
+                                         exaggeration=exaggeration, cfg_weight=take_cfg)
+            duration = candidate.shape[-1] / model.sr
+            if best_dur is None or duration < best_dur:
+                wav, best_dur, used_cfg = candidate, duration, take_cfg
+            if duration <= budget:
+                break
+            retakes += 1
+        ta.save(str(raw), wav, model.sr)
         stats = fit_audio(raw, fitted, b["duration"], max_speedup, window_duration=window)
+        stats["cfg_weight"] = used_cfg
         if stats["trimmed"]:
             over_budget += 1
-            print(f"      [warn] block {idx}: Spanish runs {stats['actual']:.2f}s but only "
-                  f"{stats['window']:.2f}s available even at {stats['speed']:.2f}x; tail trimmed. "
-                  f"Shorten this line in output/blocks_es.json to fix.")
+            print(f"      [warn] block {idx}: el espanol dura {stats['actual']:.2f}s y solo "
+                  f"hay {stats['window']:.2f}s ni siquiera a {stats['speed']:.2f}x; se recorta "
+                  f"la cola. Acorta esa linea en output/blocks_es.json para arreglarlo.")
         item = dict(b); item.update({"audio": str(fitted), "timing": stats})
         result.append(item)
     del model
     torch.cuda.empty_cache()
+    if retakes:
+        print(f"      {retakes} tomas extra para encajar bloques largos.")
     if over_budget:
-        print(f"      [warn] {over_budget}/{total} blocks were trimmed; see warnings above.")
+        print(f"      [warn] {over_budget}/{total} bloques recortados; ver avisos arriba.")
     return result
 
 

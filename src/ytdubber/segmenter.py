@@ -97,11 +97,29 @@ def _make_block(words: list[dict]) -> dict:
     }
 
 
-def choose_voice_reference(blocks: list[dict], min_s=5.0, max_s=10.5) -> tuple[float, float]:
+def speaking_rate(block: dict) -> float:
+    """Characters per second of the source block: how briskly the speaker delivers it."""
+    return len(block.get("text", "")) / max(0.01, float(block["duration"]))
+
+
+def choose_voice_reference(blocks: list[dict], min_s=5.0, max_s=10.5,
+                           confidence_margin=0.9) -> tuple[float, float]:
+    """Pick the clip that Chatterbox will clone.
+
+    Chatterbox copies the reference's pacing, and Spanish needs more time than English, so
+    a reference taken from a slow passage makes every single line overrun. Measured on the
+    same video: a 14.5 char/s reference produced a 15.1 char/s dub, an 8.7 char/s one
+    produced 9.9 char/s. Confidence still gates the choice -- a fast block that the ASR
+    barely understood is a bad voice sample -- but among confident candidates the briskest
+    delivery wins.
+    """
     candidates = [b for b in blocks if min_s <= b["duration"] <= max_s]
     if not candidates:
         candidates = sorted(blocks, key=lambda b: abs(b["duration"] - 7.0))[:5]
     if not candidates:
         return (0.0, 8.0)
-    best = max(candidates, key=lambda b: (b.get("avg_probability", 0.0), -abs(b["duration"] - 7.0)))
+    top = max(b.get("avg_probability", 0.0) for b in candidates)
+    confident = [b for b in candidates
+                 if b.get("avg_probability", 0.0) >= top * confidence_margin] or candidates
+    best = max(confident, key=lambda b: (speaking_rate(b), b.get("avg_probability", 0.0)))
     return best["start"], min(best["end"], best["start"] + max_s)
