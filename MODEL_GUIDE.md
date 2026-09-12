@@ -9,6 +9,28 @@
 | TTS / cloning | Chatterbox Multilingual V3 | 0.5B, Spanish supported, zero-shot voice cloning |
 | Cross-language accent control | `cfg_weight=0.0` | Chatterbox explicitly recommends 0 when the reference clip language differs from target |
 
+## The voice reference sets the dubbing speed
+
+Chatterbox has no duration or speed parameter: T3 emits speech tokens at a fixed 25/s, so
+the length of a line is a sampling outcome. What steers it is the reference clip — the model
+clones its **pacing** close to proportionally, not just its timbre.
+
+Measured on the same 20-minute talk, changing only the reference:
+
+| reference rate | resulting dub rate | speech trimmed |
+|---|---|---|
+| 8.7 chars/s | 9.9 chars/s | 693 s |
+| 19.7 chars/s | 14.9 chars/s | 57 s |
+
+This matters more than any other model setting here. Automatic selection now prefers the
+briskest confidently-recognised block; if you pass `--voice-ref`, choose a clip where the
+speaker keeps a good pace.
+
+`cfg_weight` is the only other lever that moves pace: 13.3 chars/s at 0.0, 15.3 at 0.3,
+16.4 at 0.5. `exaggeration` and `temperature` do not affect it, and `repetition_penalty=1.0`
+degenerates. The default stays at 0.0 to protect the accent, and rises only on a block that
+would otherwise lose its tail.
+
 ## Profiles
 
 ### fast

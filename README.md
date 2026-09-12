@@ -6,17 +6,32 @@ Pipeline:
 
 `YouTube/local video → faster-whisper → pause-aware blocks → Ollama/Qwen3 → Chatterbox V3 voice clone → timing → FFmpeg mix → video_es.mp4`
 
-## What this version fixes
+Nothing leaves the machine: no paid API, no upload, no account. All three models run on the
+local GPU, one at a time.
 
-- Uses word timestamps + VAD instead of blindly cutting Whisper segments.
-- Avoids cuts immediately after conjunctions when possible.
-- Gives the translator previous/next context but translates only the current block.
-- Rejects/retries suspicious translations (very short output or stray Cyrillic/CJK in Spanish).
+> Documentación en español: **`ARQUITECTURA.md`** (flujo completo con diagramas) y
+> **`FUNCIONAL.md`** (qué hace el sistema, reglas de calidad y límites).
+
+## Design decisions
+
+- Word timestamps + VAD instead of blindly cutting Whisper segments.
+- Avoids cuts immediately after conjunctions, with a hard duration cap so unpunctuated ASR
+  output cannot produce an unbounded block.
+- Gives the translator previous/next context but translates only the current block, with a
+  character budget derived from the time actually available.
+- Rejects/retries suspicious translations and keeps the *best* candidate, not the last one.
 - **Never slows down** synthesized speech to fill a window. Short speech is padded with silence.
-- Caps speed-up; aggressive time compression is avoided.
-- Sets Chatterbox Multilingual **V3** and `cfg_weight=0.0` for cross-language English→Spanish cloning, which reduces inherited English accent.
+- Caps speed-up per profile, and applies `min(required, cap)` so blocks that already fit are
+  untouched.
+- Picks the voice reference by **speaking rate** among confidently-recognised candidates.
+  Chatterbox clones the reference's pacing, so this is the single biggest quality lever —
+  see *Voice reference* below.
+- Sets Chatterbox Multilingual **V3** with `cfg_weight=0.0` for cross-language English→Spanish
+  cloning, which reduces inherited English accent. It is raised only as a last resort on a
+  block that would otherwise lose its tail.
 - Unloads Ollama before TTS to free VRAM.
-- Keeps the original soundtrack and ducks it underneath dubbed speech instead of deleting all music/effects.
+- Keeps the original soundtrack and ducks it underneath dubbed speech instead of deleting all
+  music/effects.
 
 ## Requirements
 
@@ -40,12 +55,14 @@ The setup script installs/checks:
 
 - FFmpeg / ffprobe
 - Deno (avoids current yt-dlp YouTube JS-runtime warnings)
-- 7-Zip
+- 7-Zip (resolved off PATH if winget did not add it)
 - Ollama
 - Python 3.11 venv
 - pinned Python packages (Chatterbox pinned to the official V3 release commit)
 - PyTorch 2.6.0 + CUDA 12.6 wheels matching Chatterbox 0.1.7
 - local cuBLAS/cuDNN CUDA 12 DLLs needed by CTranslate2/faster-whisper on Windows
+  (the download is integrity-checked; a truncated archive is what produces the confusing
+  `cublas64_12.dll is not found` much later)
 - `qwen3:8b` in Ollama
 - unit tests
 
@@ -59,52 +76,92 @@ ytdubber doctor
 You want CUDA=True, the RTX 3070 name, `cublas64_12.dll` present, Ollama reachable,
 and successful faster-whisper/Chatterbox imports.
 
-## Dub a video
+## Control panel
 
-Recommended:
+Double-click **`YouTube Dubber.exe`** in the project folder. It starts Ollama if needed,
+launches the panel and opens the browser. Equivalent without the executable:
+
+```powershell
+ytdubber web            # or: .\scripts\panel.ps1
+```
+
+The panel shows the seven pipeline stages, per-block progress during synthesis, timing
+warnings and the live log, and lets you cancel a run. When a dub finishes it archives the
+result and deletes the intermediates. Finished videos are listed with a thumbnail and can be
+played, downloaded or deleted from there.
+
+Only one dub runs at a time: the pipeline uses shared `work/` and `output/` directories.
+
+Rebuild the executable after changing `scripts/launcher.py`:
+
+```powershell
+.\scripts\build_launcher.ps1
+```
+
+It builds in its own `.venv-build`, so the validated runtime venv is never touched.
+
+## Dub from the command line
 
 ```powershell
 ytdubber dub "https://www.youtube.com/watch?v=VIDEO_ID" --profile balanced --source-lang en
-```
-
-Or a local file:
-
-```powershell
 ytdubber dub "D:\Videos\input.mp4" --profile balanced
 ```
 
-Outputs appear under `output/`:
+Useful flags: `--voice-ref`, `--original-speech-level`, and `--tts-takes` / `--max-speedup`
+to override the profile without editing it.
 
-- `transcript_source.txt`
-- `subtitles_source.srt`
-- `words.json`
-- `blocks_source.json`
-- `blocks_es.json`
-- `subtitles_es.srt`
-- `transcript_es.txt`
-- `dub_blocks/`
+A CLI run leaves its artefacts in `output/`. Runs launched from the panel are archived into
+`library/<date>_<title>/` instead, keeping the deliverables and removing the rest:
+
+- `transcript_source.txt`, `subtitles_source.srt`, `words.json`
+- `blocks_source.json`, `blocks_es.json`, `blocks_voiced.json`
+- `subtitles_es.srt`, `transcript_es.txt`
 - `dub_es.wav`
 - **`video_es.mp4`**
 
+`blocks_es.json` is the file to edit if you want to reword a line before re-running.
+
 ## Voice reference
 
-By default the program chooses a reasonably long/high-confidence speech block and extracts it as
-automatic reference. For better cloning, provide a clean 5–10 s WAV containing one speaker:
+Chatterbox does not only clone the timbre of the reference clip — **it clones its pace**,
+close to proportionally. A reference taken from a slow passage makes every dubbed line run
+long and get trimmed.
+
+Measured on the same 20-minute talk, changing nothing else:
+
+| reference | dub rate | speech trimmed |
+|---|---|---|
+| 8.7 chars/s | 9.9 chars/s | 693 s |
+| 19.7 chars/s | 14.9 chars/s | 57 s |
+
+So the automatic selection takes the **briskest** block among those the ASR recognised
+confidently. If you supply your own reference, pick a clean 5–10 s WAV with one speaker
+talking at a good pace, not one with pauses:
 
 ```powershell
 ytdubber dub "URL" --voice-ref ".\input\my_clean_reference.wav"
 ```
 
-If the reference is English and target is Spanish, the default `cfg_weight=0.0` intentionally lets
-the Spanish language model control pronunciation more strongly while retaining speaker identity.
+If the reference is English and the target is Spanish, the default `cfg_weight=0.0`
+intentionally lets the Spanish language model control pronunciation more strongly while
+retaining speaker identity.
 
 ## Profiles
 
 See `MODEL_GUIDE.md`.
 
-- `fast`: `small` ASR + `qwen3:4b`
-- `balanced`: `large-v3-turbo` + `qwen3:8b` **(recommended for RTX 3070 8 GB)**
-- `quality`: `large-v3` + `qwen3:8b`
+| | ASR | translator | speed-up cap | TTS takes |
+|---|---|---|---|---|
+| `fast` | `small` | `qwen3:4b` | 1.35 | 2 |
+| `balanced` ⭐ | `large-v3-turbo` | `qwen3:8b` | 1.30 | 3 |
+| `quality` | `large-v3` | `qwen3:8b` | 1.25 | 4 |
+
+`balanced` is the default and the recommendation for an RTX 3070 8 GB.
+
+`quality` uses undistilled `large-v3`. It does not punctuate any better, but it transcribes
+noticeably more accurately — on a technical talk, turbo heard "censorship" as "sensor shape"
+and "Qwen" as "queen" — for 122 s instead of 28 s. Worth it on content with terminology that
+matters.
 
 ## Important limitations
 
@@ -112,7 +169,12 @@ See `MODEL_GUIDE.md`.
 2. The original soundtrack is ducked during translated speech. It is not true dialogue/music source separation.
 3. Automatic reference selection cannot know whether music/noise is present. A clean manual reference gives better cloning.
 4. Translation quality depends on ASR. Product names/proper nouns can be misheard; inspect `blocks_es.json` for important videos.
-5. Use voice cloning only when you have the right to use the source voice/content.
+5. Some audio makes Whisper return unpunctuated, uncased text. Blocks are then cut by the
+   clock rather than by meaning. Both `large-v3-turbo` and `large-v3` behave this way on the
+   same material, so it is not a model choice.
+6. Two runs of the same video can segment differently and pick different voice references. To
+   compare configurations meaningfully, pin the reference with `--voice-ref`.
+7. Use voice cloning only when you have the right to use the source voice/content.
 
 ## Full model smoke test
 
@@ -130,8 +192,10 @@ It generates Spanish audio with Chatterbox V3, transcribes it with faster-whispe
 .\scripts\run_tests.ps1
 ```
 
-The included tests cover segmentation guards, timestamp formatting, script validation, and FFmpeg
-audio timing behavior without downloading large AI models.
+45 model-independent tests covering segmentation guards and the hard duration cap, voice
+reference selection, translation retry scoring, TTS take selection, text splitting, SRT
+formatting, library archiving and deletion, and real FFmpeg timing and A/V integration. No
+model downloads, no network.
 
 ## Optional Qwen3-TTS
 
