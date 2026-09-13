@@ -30,8 +30,8 @@ STAGES = {
     1: "Descargando y extrayendo audio",
     2: "Transcribiendo (faster-whisper)",
     3: "Segmentando en bloques",
-    4: "Traduciendo al espanol (Ollama)",
-    5: "Preparando referencia de voz",
+    4: "Preparando y midiendo la voz de referencia",
+    5: "Traduciendo al espanol (Ollama)",
     6: "Sintetizando voz (Chatterbox) y ajustando tiempos",
     7: "Mezclando el video final",
 }

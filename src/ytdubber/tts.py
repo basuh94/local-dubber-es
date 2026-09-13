@@ -2,7 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 import subprocess
-from .utils import OUTPUT, WORK, block_window, ffprobe_duration
+from .utils import OUTPUT, TTS_CHARS_PER_SECOND, WORK, block_window, ffprobe_duration
 
 
 def extract_reference(video_path: Path, start: float, end: float, out: Path) -> Path:
@@ -92,6 +92,52 @@ def fit_audio(source: Path, destination: Path, target_duration: float, max_speed
     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"actual": actual, "target": target_duration, "window": window,
             "speed": applied, "trimmed": trimmed, "duration": fitted}
+
+
+# Spoken while measuring how fast this particular cloned voice talks. Ordinary Spanish, no
+# rare words, and roughly as long as a real dubbing block: a short probe carries
+# proportionally more leading and trailing silence and would read as slower than reality.
+CALIBRATION_LINES = (
+    "Esta es una prueba para medir la velocidad de la voz antes de empezar el doblaje, "
+    "de manera que la traducción se ajuste al tiempo disponible en cada bloque del vídeo.",
+    "El sistema necesita saber cuántos caracteres por segundo pronuncia esta voz concreta, "
+    "porque el ritmo depende del fragmento de referencia y cambia con cada vídeo nuevo.",
+)
+# Guard rails: a probe that lands outside this range means something went wrong, so fall
+# back to the documented default rather than budgeting on nonsense.
+MIN_RATE, MAX_RATE = 7.0, 26.0
+
+
+def measure_speaking_rate(voice_ref: Path, cfg_weight: float, exaggeration: float,
+                          lines: tuple[str, ...] = CALIBRATION_LINES) -> float:
+    """Characters per second this reference voice actually produces.
+
+    The rate is not a property of Chatterbox: it is a property of the reference clip, which
+    changes with every video. Measuring it here lets the translator budget against the real
+    delivery instead of a constant that goes stale the moment the reference changes.
+    """
+    import torch
+    from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = ChatterboxMultilingualTTS.from_pretrained(device=device, t3_model="v3")
+    try:
+        chars = seconds = 0.0
+        for line in lines:
+            wav = model.generate(line, language_id="es", audio_prompt_path=str(voice_ref),
+                                 exaggeration=exaggeration, cfg_weight=cfg_weight)
+            chars += len(line)
+            seconds += wav.shape[-1] / model.sr
+        rate = chars / max(seconds, 0.01)
+    finally:
+        del model
+        torch.cuda.empty_cache()
+
+    if not MIN_RATE <= rate <= MAX_RATE:
+        print(f"      [warn] ritmo medido fuera de rango ({rate:.2f} car/s); "
+              f"se usa el valor por defecto {TTS_CHARS_PER_SECOND}")
+        return TTS_CHARS_PER_SECOND
+    return rate
 
 
 def cfg_ladder(base: float, takes: int) -> list[float]:

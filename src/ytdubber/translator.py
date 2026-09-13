@@ -44,7 +44,8 @@ def _score_candidate(text: str, ratio: float, target_lang: str, budget: int) -> 
 
 
 def translate_blocks(blocks: list[dict], model: str, source_lang="en", target_lang="es",
-                     max_speedup: float = 1.12) -> list[dict]:
+                     max_speedup: float = 1.12,
+                     chars_per_second: float | None = None) -> list[dict]:
     translated = []
     total = len(blocks)
     over_budget = 0
@@ -52,10 +53,12 @@ def translate_blocks(blocks: list[dict], model: str, source_lang="en", target_la
         prev_text = blocks[i-1]["text"] if i else ""
         next_text = blocks[i+1]["text"] if i + 1 < total else ""
         # Spanish runs longer than English, so ask for a rendering that will actually fit
-        # the window this block has on screen. Never squeeze below a floor that would
+        # the window this block has on screen. The budget uses the rate measured for this
+        # run's voice reference, not a constant. Never squeeze below a floor that would
         # force the model to drop content.
         window = block_window(blocks, i)
-        budget = max(char_budget(window, max_speedup), int(len(current["text"]) * 0.60))
+        budget = max(char_budget(window, max_speedup, chars_per_second),
+                     int(len(current["text"]) * 0.60))
         prompt = f'''You are a professional audiovisual translator for dubbing.
 Translate ONLY CURRENT from {source_lang} into natural Spanish from Spain.
 PREVIOUS and NEXT are context only: never translate or repeat them.

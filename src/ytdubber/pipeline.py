@@ -2,12 +2,14 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 from .models import get_profile
-from .utils import OUTPUT, WORK, ensure_dirs, read_json, write_json, seconds_to_srt
+from .utils import (OUTPUT, TTS_CHARS_PER_SECOND, WORK, ensure_dirs, read_json, write_json,
+                    seconds_to_srt)
 from .downloader import download_source
 from .transcriber import transcribe
 from .segmenter import build_blocks, choose_voice_reference
 from .translator import translate_blocks, unload_ollama
-from .tts import extract_reference, synthesize_chatterbox, assemble_dub
+from .tts import (assemble_dub, extract_reference, measure_speaking_rate,
+                  synthesize_chatterbox)
 from .mixer import make_final_video
 
 
@@ -40,14 +42,11 @@ def run_pipeline(source: str, profile_name="balanced", source_lang: str | None =
     blocks = build_blocks(tr["words"])
     write_json(OUTPUT / "blocks_source.json", blocks)
 
-    print("[4/7] Translate with Ollama")
-    translated = translate_blocks(blocks, profile.ollama_model, tr["meta"]["language"], "es",
-                                  max_speedup=speed_cap)
-    write_json(OUTPUT / "blocks_es.json", translated)
-    _write_target_subtitles(translated)
-    unload_ollama(profile.ollama_model)  # Free VRAM before TTS.
-
-    print("[5/7] Prepare voice reference")
+    # The voice reference only needs the blocks and the video, both of which exist by now.
+    # Preparing it before translating lets us measure how fast this particular cloned voice
+    # speaks, so the translator can budget against the real delivery instead of a constant
+    # that goes stale whenever the reference changes.
+    print("[4/7] Prepare voice reference")
     if voice_ref:
         ref = Path(voice_ref).resolve()
         if not ref.exists():
@@ -57,6 +56,17 @@ def run_pipeline(source: str, profile_name="balanced", source_lang: str | None =
         ref = WORK / "voice_ref_auto.wav"
         extract_reference(video, start, end, ref)
         print(f"      auto reference: {start:.2f}s -> {end:.2f}s")
+
+    rate = measure_speaking_rate(ref, profile.cfg_weight, profile.exaggeration)
+    print(f"      ritmo medido de esta voz: {rate:.2f} car/s "
+          f"(por defecto {TTS_CHARS_PER_SECOND})")
+
+    print("[5/7] Translate with Ollama")
+    translated = translate_blocks(blocks, profile.ollama_model, tr["meta"]["language"], "es",
+                                  max_speedup=speed_cap, chars_per_second=rate)
+    write_json(OUTPUT / "blocks_es.json", translated)
+    _write_target_subtitles(translated)
+    unload_ollama(profile.ollama_model)  # Free VRAM before TTS.
 
     print("[6/7] Synthesize + timing")
     voiced = synthesize_chatterbox(

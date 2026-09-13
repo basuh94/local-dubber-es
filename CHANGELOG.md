@@ -6,6 +6,54 @@ Este proyecto sigue [Versionado Semántico](https://semver.org/lang/es/).
 La versión vive en un único sitio: `src/ytdubber/__init__.py`. `pyproject.toml` la lee de
 ahí con `dynamic = ["version"]`.
 
+## [0.5.0] - 2026-09-13
+
+### Corregido
+
+- **El presupuesto de longitud se calculaba con una constante que no puede ser correcta.**
+  `TTS_CHARS_PER_SECOND = 12.5` trataba el ritmo como una propiedad de Chatterbox, cuando
+  es una propiedad del clip de referencia y cambia con cada vídeo: medido sobre dos
+  referencias del mismo material, 12,08 y 15,29 car/s, un 27 % de diferencia. El efecto
+  era pedirle al traductor que comprimiera más de lo necesario y marcar como problemáticos
+  bloques que sí cabían.
+
+### Añadido
+
+- **Calibración automática por vídeo.** `measure_speaking_rate()` sintetiza dos frases de
+  prueba con la voz ya seleccionada y mide sus caracteres por segundo reales; ese valor
+  alimenta el presupuesto de la traducción. Ya no hay nada que ajustar a mano.
+- Las etapas 4 y 5 se intercambian: la referencia de voz solo necesita los bloques y el
+  vídeo, disponibles tras segmentar, así que se prepara **antes** de traducir. El panel
+  refleja el nuevo orden.
+- Guardarraíles: una medición fuera de 7-26 car/s se descarta y se cae al valor por
+  defecto con aviso.
+
+### Detalle de calibración
+
+Las frases sonda miden ~165 caracteres a propósito. Con frases de 70 la sonda daba
+14,46 car/s frente a los 15,32 realmente observados (−6 % de sesgo): una frase corta lleva
+proporcionalmente más silencio inicial y final, y parece más lenta de lo que es. Con frases
+de longitud parecida a un bloque real el sesgo desaparece (15,29 medido, 15,32 observado).
+
+### Mediciones
+
+Mismo vídeo y perfil que la 0.4.0, añadiendo solo la sonda:
+
+| | recortados | voz perdida | ratio ES/EN | bloques sobre presupuesto |
+|---|---|---|---|---|
+| constante 12,5 | 1/78 | 5 s | 0,97 | 38 |
+| ritmo medido | 1/78 | 5 s | **1,00** | **5** |
+
+El encaje no cambia porque ya estaba resuelto; lo que mejora es que el español deja de
+salir comprimido y que los avisos dicen la verdad. Coste de la sonda: ~67 s, casi todo
+cargando el modelo.
+
+### Corregido de paso
+
+- La ruta de respaldo de la medición usaba `TTS_CHARS_PER_SECOND` sin importarlo y habría
+  fallado con `NameError` justo cuando la medición saliera mal. Lo detectaron los tests
+  nuevos antes de llegar a producción.
+
 ## [0.4.0] - 2026-09-11
 
 Trabajo sobre la calidad del encaje temporal, guiado por mediciones repetidas sobre una

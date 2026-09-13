@@ -78,9 +78,17 @@ def block_window(blocks: list[dict], index: int) -> float:
     return float(block["duration"]) + TAIL_ALLOWANCE
 
 
-def char_budget(window: float, max_speedup: float) -> int:
-    """Characters of Spanish that fit in ``window`` once the speed-up cap is applied."""
-    return max(1, int(TTS_CHARS_PER_SECOND * window * max_speedup))
+def char_budget(window: float, max_speedup: float,
+                chars_per_second: float | None = None) -> int:
+    """Characters of Spanish that fit in ``window`` once the speed-up cap is applied.
+
+    ``chars_per_second`` should be the rate measured for this run's voice reference: the
+    delivery speed belongs to the reference clip, not to Chatterbox, so a fixed constant
+    goes stale as soon as the reference changes. ``TTS_CHARS_PER_SECOND`` is only the
+    fallback for when no measurement is available.
+    """
+    rate = chars_per_second if chars_per_second and chars_per_second > 0 else TTS_CHARS_PER_SECOND
+    return max(1, int(rate * window * max_speedup))
 
 
 def seconds_to_srt(seconds: float) -> str:
