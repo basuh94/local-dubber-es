@@ -1,13 +1,14 @@
-# YouTube Dubber Win
+# local-dubber-es — YouTube to Spanish dubbing
 
-Local YouTube/video dubbing to **Spanish (Spain)**, optimized for **Windows 11 + NVIDIA RTX 3070 8 GB**.
+Dub **YouTube videos** (or any local video) to **Spanish (Spain)** with voice cloning, fully
+on your own PC. Optimized for **Windows 11 + NVIDIA RTX 3070 8 GB**.
 
 Pipeline:
 
 `YouTube/local video → faster-whisper → pause-aware blocks → Ollama/Qwen3 → Chatterbox V3 voice clone → timing → FFmpeg mix → video_es.mp4`
 
-Nothing leaves the machine: no paid API, no upload, no account. All three models run on the
-local GPU, one at a time.
+Processing is fully local: no paid API, no upload, no account. Only the source video and the
+model weights are downloaded. All three models run on the local GPU, one at a time.
 
 > Documentación en español: **`ARQUITECTURA.md`** (flujo completo con diagramas) y
 > **`FUNCIONAL.md`** (qué hace el sistema, reglas de calidad y límites).
@@ -44,9 +45,11 @@ local GPU, one at a time.
 
 ## One-command setup
 
-Open PowerShell in the extracted folder:
+Clone the repository and run the setup script from PowerShell:
 
 ```powershell
+git clone https://github.com/basuh94/local-dubber-es.git
+cd local-dubber-es
 Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\setup_windows.ps1
 ```
@@ -78,12 +81,15 @@ and successful faster-whisper/Chatterbox imports.
 
 ## Control panel
 
-Double-click **`YouTube Dubber.exe`** in the project folder. It starts Ollama if needed,
-launches the panel and opens the browser. Equivalent without the executable:
+The quickest way in is the panel, started from the activated venv:
 
 ```powershell
 ytdubber web            # or: .\scripts\panel.ps1
 ```
+
+For a double-click launcher, build **`YouTube Dubber.exe`** once (it is not part of the
+repository) with `.\scripts\build_launcher.ps1`. The executable starts Ollama if needed,
+launches the panel and opens the browser.
 
 The panel shows the seven pipeline stages, per-block progress during synthesis, timing
 warnings and the live log, and lets you cancel a run. When a dub finishes it archives the
@@ -92,7 +98,7 @@ played, downloaded or deleted from there.
 
 Only one dub runs at a time: the pipeline uses shared `work/` and `output/` directories.
 
-Rebuild the executable after changing `scripts/launcher.py`:
+Rebuild it after changing `scripts/launcher.py`:
 
 ```powershell
 .\scripts\build_launcher.ps1
@@ -192,7 +198,7 @@ It generates Spanish audio with Chatterbox V3, transcribes it with faster-whispe
 .\scripts\run_tests.ps1
 ```
 
-45 model-independent tests covering segmentation guards and the hard duration cap, voice
+Model-independent tests covering segmentation guards and the hard duration cap, voice
 reference selection, translation retry scoring, TTS take selection, text splitting, SRT
 formatting, library archiving and deletion, and real FFmpeg timing and A/V integration. No
 model downloads, no network.
@@ -201,3 +207,32 @@ model downloads, no network.
 
 See `extras/qwen3_tts/README.md`. It is kept in a separate venv because its current package pins a
 different Transformers stack from Chatterbox.
+
+## Responsible use
+
+This project is intended for personal and educational use.
+
+- Respect copyright and the YouTube Terms of Service. Only download and dub content you own,
+  that is licensed for it, or that you are otherwise permitted to use.
+- Do not publish or redistribute dubbed videos without the original creator's permission.
+- Do not clone anyone's voice without their consent, and never use cloned voices to
+  impersonate or deceive.
+
+You are solely responsible for how you use this software.
+
+## Credits
+
+This project orchestrates third-party tools, each under its own license:
+
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — speech recognition
+- [Chatterbox](https://github.com/resemble-ai/chatterbox) by Resemble AI — voice-cloning TTS
+- [Qwen3](https://github.com/QwenLM/Qwen3) via [Ollama](https://ollama.com) — translation
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — video download
+- [FFmpeg](https://ffmpeg.org) — audio/video processing
+
+The NVIDIA cuBLAS/cuDNN DLLs are not included in this repository; `setup_windows.ps1`
+downloads them from [whisper-standalone-win](https://github.com/Purfview/whisper-standalone-win).
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

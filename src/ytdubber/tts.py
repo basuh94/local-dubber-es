@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from .utils import OUTPUT, TTS_CHARS_PER_SECOND, WORK, block_window, ffprobe_duration
 
@@ -224,18 +225,48 @@ def synthesize_chatterbox(blocks: list[dict], voice_ref: Path, cfg_weight: float
     return result
 
 
-def assemble_dub(blocks: list[dict], final_path: Path) -> Path:
+# One ffmpeg call per this many clips. Windows caps a command line at 32767 characters and
+# each clip costs roughly 100 of them between its -i path and its filter graph entry, so a
+# long video used to die here with WinError 206 after the whole synthesis had already run.
+ASSEMBLE_BATCH = 50
+
+
+def _mix_at_offsets(clips: list[tuple[str, int]], destination: Path) -> Path:
+    """Lay each clip on a shared timeline at its own millisecond offset and sum them."""
     inputs, filters, labels = [], [], []
-    for i, b in enumerate(blocks):
-        inputs += ["-i", b["audio"]]
-        delay = round(float(b["start"]) * 1000)
+    for i, (path, delay) in enumerate(clips):
+        inputs += ["-i", str(path)]
         filters.append(f"[{i}:a]adelay={delay}:all=1[a{i}]")
         labels.append(f"[a{i}]")
-    if not blocks:
-        raise ValueError("No blocks to assemble")
-    filter_complex = ";".join(filters) + ";" + "".join(labels) + f"amix=inputs={len(blocks)}:duration=longest:normalize=0[out]"
+    filter_complex = (";".join(filters) + ";" + "".join(labels) +
+                      f"amix=inputs={len(clips)}:duration=longest:normalize=0[out]")
     subprocess.run([
         "ffmpeg", "-y", *inputs, "-filter_complex", filter_complex, "-map", "[out]",
-        "-ar", "24000", "-ac", "1", str(final_path)
+        "-ar", "24000", "-ac", "1", str(destination)
     ], check=True)
-    return final_path
+    return destination
+
+
+def assemble_dub(blocks: list[dict], final_path: Path) -> Path:
+    if not blocks:
+        raise ValueError("No blocks to assemble")
+    clips = [(b["audio"], round(float(b["start"]) * 1000)) for b in blocks]
+    if len(clips) <= ASSEMBLE_BATCH:
+        return _mix_at_offsets(clips, final_path)
+
+    # Mix in batches, then mix the batches. Each partial already carries the absolute
+    # timeline because its clips were placed with adelay, so the second pass adds no
+    # further offset.
+    parts_dir = WORK / "dub_parts"
+    shutil.rmtree(parts_dir, ignore_errors=True)
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        parts = []
+        for start in range(0, len(clips), ASSEMBLE_BATCH):
+            part = parts_dir / f"part_{len(parts):03d}.wav"
+            _mix_at_offsets(clips[start:start + ASSEMBLE_BATCH], part)
+            parts.append((str(part), 0))
+        print(f"      ensamblado en {len(parts)} lotes de hasta {ASSEMBLE_BATCH} bloques")
+        return _mix_at_offsets(parts, final_path)
+    finally:
+        shutil.rmtree(parts_dir, ignore_errors=True)
